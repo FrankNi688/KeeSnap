@@ -1,0 +1,16 @@
+{
+  "name": "KeeSnap",
+  "short_name": "KeeSnap",
+  "description": "Snap recovery codes, security questions and more; on-device OCR, sorted and encrypted. 拍下恢复码、密保问题，本机识字、加密保存。",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#f5f6fa",
+  "theme_color": "#14213d",
+  "lang": "en",
+  "icons": [
+    { "src": "icons/icon-192.png", "sizes": "192x192", "type": "image/png" },
+    { "src": "icons/icon-512.png", "sizes": "512x512", "type": "image/png" },
+    { "src": "icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ]
+}

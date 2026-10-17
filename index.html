@@ -1,0 +1,70 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#14213d">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="KeeSnap">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="apple-touch-icon" href="icons/icon-180.png">
+<link rel="icon" href="icons/icon-192.png">
+<link rel="stylesheet" href="style.css">
+<title>KeeSnap</title>
+</head>
+<body>
+<header><h1>🔐 <span data-i18n="appName">KeeSnap</span></h1><button id="lockBtn" class="ghost hidden" data-i18n="lock">Lock</button></header>
+
+<section id="setup" class="screen hidden">
+  <h2 data-i18n="setupTitle"></h2>
+  <p class="hint" data-i18n-html="setupHint"></p>
+  <input id="pw1" type="password" data-i18n-ph="pw1" autocomplete="new-password">
+  <input id="pw2" type="password" data-i18n-ph="pw2" autocomplete="new-password">
+  <button id="setupBtn" data-i18n="setupBtn"></button>
+  <p id="setupMsg" class="err"></p>
+</section>
+
+<section id="unlock" class="screen hidden">
+  <h2 data-i18n="unlockTitle"></h2>
+  <input id="pw" type="password" data-i18n-ph="pw" autocomplete="current-password">
+  <button id="unlockBtn" data-i18n="unlockBtn"></button>
+  <p id="unlockMsg" class="err"></p>
+</section>
+
+<section id="main" class="screen hidden">
+  <input id="search" type="search" data-i18n-ph="search">
+  <div id="chips"></div>
+  <ul id="list"></ul>
+  <p id="empty" class="hint hidden" data-i18n="empty"></p>
+  <details class="tools">
+    <summary data-i18n="tools"></summary>
+    <button id="exportBtn" class="ghost" data-i18n="exportBtn"></button>
+    <label class="ghost filebtn"><span data-i18n="importBtn"></span><input id="importFile" type="file" accept=".json,application/json" hidden></label>
+    <label class="row"><span data-i18n="langLabel"></span> <select id="langSel"><option value="en">English</option><option value="zh">中文</option></select></label>
+    <p id="storageInfo" class="hint"></p>
+  </details>
+  <label class="fab"><span data-i18n="fab"></span><input id="photo" type="file" accept="image/*" capture="environment" hidden></label>
+</section>
+
+<section id="review" class="screen hidden">
+  <img id="reviewImg" alt="">
+  <p id="ocrStatus" class="hint"></p>
+  <label><span data-i18n="title"></span><input id="title"></label>
+  <label><span data-i18n="category"></span><select id="category"></select></label>
+  <label><span data-i18n="ocrText"></span><textarea id="ocrText" rows="8"></textarea></label>
+  <label class="row"><input id="keepImg" type="checkbox" checked> <span data-i18n="keepImg"></span></label>
+  <div class="row"><button id="saveBtn" disabled data-i18n="save"></button><button id="cancelBtn" class="ghost" data-i18n="cancel"></button></div>
+</section>
+
+<section id="detail" class="screen hidden">
+  <h2 id="dTitle"></h2>
+  <p id="dMeta" class="hint"></p>
+  <pre id="dText"></pre>
+  <div class="row"><button id="copyBtn" data-i18n="copy"></button><button id="backBtn" class="ghost" data-i18n="back"></button><button id="delBtn" class="danger" data-i18n="del"></button></div>
+  <img id="dImg" alt="">
+</section>
+
+<script src="vendor/tesseract/tesseract.min.js"></script>
+<script type="module" src="app.js"></script>
+</body>
+</html>

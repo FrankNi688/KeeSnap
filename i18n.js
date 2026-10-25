@@ -2,6 +2,7 @@
 const S = {
   en: {
     appName: 'KeeSnap', lock: 'Lock',
+    updateReady: 'A new version is ready.', updateBtn: 'Refresh',
     setupTitle: 'Create a master password',
     setupHint: 'Everything is encrypted with this password and stays on this device. <b>If you forget it, nothing can be recovered.</b>',
     pw1: 'Master password (8+ characters)', pw2: 'Type it again', setupBtn: 'Create vault',
@@ -30,6 +31,7 @@ const S = {
   },
   zh: {
     appName: 'KeeSnap', lock: '锁定',
+    updateReady: '新版本已下载好。', updateBtn: '刷新',
     setupTitle: '设置主密码',
     setupHint: '所有内容都用这个密码加密，只存在这台设备上。<b>忘了密码就无法恢复</b>，请记牢。',
     pw1: '主密码（至少 8 位）', pw2: '再输一次', setupBtn: '创建保险箱',

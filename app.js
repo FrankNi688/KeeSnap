@@ -18,9 +18,23 @@ function show(id) {
   $('lockBtn').classList.toggle('hidden', !key);
 }
 
+// ---------- updates: a new sw.js installs in the background; offer a one-tap refresh
+function setupUpdates() {
+  if (!('serviceWorker' in navigator)) return;
+  const hadController = !!navigator.serviceWorker.controller; // false on the very first install
+  navigator.serviceWorker.addEventListener('controllerchange', () => {
+    if (hadController) $('updateBar').classList.remove('hidden');
+  });
+  navigator.serviceWorker.register('sw.js').then((reg) => {
+    // also check when the app comes back from the background, not only on a cold start
+    document.addEventListener('visibilitychange', () => { if (!document.hidden) reg.update().catch(() => {}); });
+  }).catch(() => {});
+}
+$('updateBtn').onclick = () => location.reload();
+
 // ----------
 async function boot() {
-  if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(() => {});
+  setupUpdates();
   applyStatic(); fillCategories(); $('langSel').value = lang;
   const meta = await DB.getMeta('vault');
   show(meta ? 'unlock' : 'setup');

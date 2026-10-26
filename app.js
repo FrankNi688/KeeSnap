@@ -1,7 +1,7 @@
 import * as C from './crypto.js';
 import * as DB from './db.js';
 import { CATEGORIES, classify, labelOf } from './classify.js';
-import { safeTitle, selectAutoOcr } from './ocr-logic.js';
+import { filterNonCodeLines, safeTitle, selectAutoOcr } from './ocr-logic.js';
 import { t, lang, setLang, applyStatic } from './i18n.js';
 
 const $ = (id) => document.getElementById(id);
@@ -39,6 +39,11 @@ function setupUpdates() {
   }).catch(() => {});
 }
 $('updateBtn').onclick = () => location.reload();
+$('showRemovedLinesBtn').onclick = () => {
+  const details = $('removedLines');
+  details.classList.toggle('hidden');
+  $('showRemovedLinesBtn').setAttribute('aria-expanded', String(!details.classList.contains('hidden')));
+};
 
 // ----------
 async function boot() {
@@ -289,7 +294,7 @@ async function ocr(dataUrl, language, codeMode = false) {
   const imageForOcr = codeMode ? await preprocessCodes(dataUrl) : dataUrl;
   // recognize() is always called with the current crop; there is no OCR-result cache.
   const { data } = await worker.recognize(imageForOcr);
-  return { text: codeMode ? data.text.replace(/[^A-Za-z0-9\-\r\n]/g, '').trim() : tidy(data.text), confidence: data.confidence };
+  return { text: codeMode ? data.text.replace(/[^A-Za-z0-9\-\s]/g, '').trim() : tidy(data.text), confidence: data.confidence };
 }
 
 async function runOcr() {
@@ -297,27 +302,39 @@ async function runOcr() {
   $('rerunOcrBtn').disabled = true; $('saveBtn').disabled = true;
   let mode = $('ocrMode').value;
   $('ocrStatus').textContent = t(mode === 'code' ? 'ocrCodeRunning' : 'ocrRunning');
+  $('showRemovedLinesBtn').classList.add('hidden'); $('removedLines').classList.add('hidden');
+  $('removedLines').textContent = '';
   $('ocrText').value = ''; $('title').value = '';
   const t0 = performance.now();
   let usedCode = mode === 'code';
   try {
     let text;
+    let removedLines = [];
     if (mode === 'auto') {
       const firstPass = await ocr(ocrSource, 'eng+chi_sim');
       const result = await selectAutoOcr(firstPass, classify(firstPass.text), async () => {
         $('ocrStatus').textContent = t('ocrCodeRunning');
         return ocr(ocrSource, 'eng', true);
       });
-      text = result.text; usedCode = result.usedCode;
-    } else if (mode === 'code') text = (await ocr(ocrSource, 'eng', true)).text;
-    else text = (await ocr(ocrSource, mode)).text;
+      text = result.text; usedCode = result.usedCode; removedLines = result.removedLines || [];
+    } else if (mode === 'code') {
+      const filtered = filterNonCodeLines((await ocr(ocrSource, 'eng', true)).text);
+      text = filtered.text; removedLines = filtered.removedLines;
+    } else text = (await ocr(ocrSource, mode)).text;
 
     const cat = classify(text);
     $('ocrText').value = text; $('category').value = cat;
     $('title').value = safeTitle(text, cat, labelOf(cat), new Date().toLocaleDateString());
     const secs = ((performance.now() - t0) / 1000).toFixed(1);
     const codey = ['recovery', 'wifi', 'security'].includes(cat);
-    $('ocrStatus').textContent = (usedCode ? t('ocrCodeDone', { s: secs }) : t('ocrDone', { s: secs })) + t(codey ? 'ocrCheckCodes' : 'ocrCheck');
+    const removedStatus = removedLines.length ? ` ${t('ocrRemovedLines', { n: removedLines.length })}` : '';
+    $('ocrStatus').textContent = (usedCode ? t('ocrCodeDone', { s: secs }) : t('ocrDone', { s: secs })) + removedStatus + t(codey ? 'ocrCheckCodes' : 'ocrCheck');
+    if (removedLines.length) {
+      $('removedLines').textContent = removedLines.join('\n');
+      $('showRemovedLinesBtn').textContent = t('showRemovedLines');
+      $('showRemovedLinesBtn').classList.remove('hidden');
+      $('showRemovedLinesBtn').setAttribute('aria-expanded', 'false');
+    }
   } catch (err) {
     $('ocrStatus').textContent = t('ocrFail', { e: err.message });
   }

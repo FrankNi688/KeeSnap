@@ -1,6 +1,20 @@
 const CODE_LINE = /^\s*(?:[A-Za-z0-9]{4,5}[-\s]){2,}[A-Za-z0-9]{4,5}\s*$/;
 const TITLE_CODE_PATTERN = /\b[A-Za-z0-9]{2,6}(?:-[A-Za-z0-9]{2,6})+\b/;
 const SECRET_LABEL = /\b(?:password|passphrase|passcode|pin|answer|secret)\b/i;
+const CODE_LIKE_LINE = /^\s*[A-Za-z0-9]{2,6}(?:[- ]+[A-Za-z0-9]{2,6})+\s*$/;
+
+export function filterNonCodeLines(text) {
+  const lines = (text || '').split(/\r?\n/);
+  const codeLineCount = lines.filter((line) => CODE_LIKE_LINE.test(line)).length;
+  if (codeLineCount < 2) return { text: lines.join('\n'), removedLines: [] };
+  const kept = [];
+  const removedLines = [];
+  for (const line of lines) {
+    if (line.includes('-') || CODE_LIKE_LINE.test(line) || !line.trim()) kept.push(line);
+    else removedLines.push(line);
+  }
+  return { text: kept.join('\n'), removedLines };
+}
 
 function mostlyChinese(line) {
   const chars = Array.from(line).filter((char) => !/\s/u.test(char));
@@ -35,7 +49,9 @@ export async function selectAutoOcr(firstPass, category, runCode) {
   if (codeCount <= firstCount) return { text: firstText, usedCode: true };
 
   const chineseLines = firstText.split(/\r?\n/).filter(mostlyChinese);
-  return { text: [codePass.text, ...chineseLines].filter(Boolean).join('\n'), usedCode: true };
+  const combined = [codePass.text, ...chineseLines].filter(Boolean).join('\n');
+  const filtered = filterNonCodeLines(combined);
+  return { ...filtered, usedCode: true };
 }
 
 export function safeTitle(text, category, categoryLabel, dateLabel) {

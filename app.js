@@ -11,7 +11,8 @@ let items = [];          // decrypted items, only while unlocked
 let filter = 'all';
 let pending = null;      // new item under review
 let current = null;      // item on the detail screen
-let ocrWorker = null;
+const ocrWorkers = new Map();
+let ocrSource = null;
 
 function show(id) {
   for (const s of document.querySelectorAll('.screen')) s.classList.toggle('hidden', s.id !== id);
@@ -123,25 +124,15 @@ $('photo').onchange = async (e) => {
   if (!file) return;
   const ocrImg = await resize(file, 2000, 0.92);
   const keepImg = await resize(file, 1280, 0.8);
+  ocrSource = ocrImg;
   pending = { image: keepImg };
   $('reviewImg').src = keepImg;
   $('ocrText').value = ''; $('title').value = ''; $('saveBtn').disabled = true;
   show('review');
-  $('ocrStatus').textContent = t('ocrRunning');
-  const t0 = performance.now();
-  try {
-    const text = await ocr(ocrImg);
-    const cat = classify(text);
-    $('ocrText').value = text; $('category').value = cat; $('title').value = suggestTitle(text, cat);
-    const secs = ((performance.now() - t0) / 1000).toFixed(1);
-    const codey = ['recovery', 'wifi', 'security'].includes(cat);
-    if (codey) $('keepImg').checked = true; // codes: always keep the photo for checking
-    $('ocrStatus').textContent = t('ocrDone', { s: secs }) + t(codey ? 'ocrCheckCodes' : 'ocrCheck');
-  } catch (err) {
-    $('ocrStatus').textContent = t('ocrFail', { e: err.message });
-  }
-  $('saveBtn').disabled = false;
+  $('ocrMode').value = 'auto';
+  await runOcr();
 };
+$('rerunOcrBtn').onclick = () => runOcr();
 function fillCategories() {
   const sel = $('category'), v = sel.value; sel.innerHTML = '';
   for (const c of CATEGORIES) sel.append(new Option(labelOf(c.id), c.id));
@@ -150,19 +141,88 @@ function fillCategories() {
 $('langSel').onchange = (e) => { setLang(e.target.value); fillCategories(); render(); storageInfo(); };
 $('cancelBtn').onclick = () => { pending = null; show('main'); };
 
-async function ocr(dataUrl) {
-  if (!ocrWorker) {
+async function getOcrWorker(language, codeMode = false) {
+  const workerKey = codeMode ? `${language}:code` : language;
+  if (!ocrWorkers.has(workerKey)) {
     const base = new URL('vendor/', location.href).href;
-    ocrWorker = await Tesseract.createWorker(['eng', 'chi_sim'], 1, {
+    const worker = await Tesseract.createWorker(language.split('+'), 1, {
       workerPath: base + 'tesseract/worker.min.js',
       corePath: base + 'tesseract/',
       langPath: base + 'lang',
       gzip: true,
       cacheMethod: 'none', // language data is cached by the Service Worker
     });
+    if (codeMode) {
+      await worker.setParameters({
+        tessedit_char_whitelist: 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-',
+        tessedit_pageseg_mode: '6',
+      });
+    }
+    ocrWorkers.set(workerKey, worker);
   }
-  const { data } = await ocrWorker.recognize(dataUrl);
+  return ocrWorkers.get(workerKey);
+}
+
+async function ocr(dataUrl, language, codeMode = false) {
+  const worker = await getOcrWorker(language, codeMode);
+  const { data } = await worker.recognize(codeMode ? await preprocessCodes(dataUrl) : dataUrl);
   return tidy(data.text);
+}
+
+async function runOcr() {
+  if (!ocrSource || !pending) return;
+  $('rerunOcrBtn').disabled = true; $('saveBtn').disabled = true;
+  $('ocrStatus').textContent = t('ocrRunning');
+  const t0 = performance.now();
+  try {
+    const mode = $('ocrMode').value;
+    let text;
+    if (mode === 'auto') {
+      const firstPass = await ocr(ocrSource, 'eng+chi_sim');
+      const firstCategory = classify(firstPass);
+      if (['recovery', 'wifi', 'security'].includes(firstCategory)) {
+        const codePass = await ocr(ocrSource, 'eng', true);
+        // Keep Chinese lines from the bilingual pass because the Code worker is English-only.
+        const chineseLines = firstPass.split('\n').filter((line) => /[\u4e00-\u9fff]/.test(line));
+        text = [codePass, ...chineseLines].filter(Boolean).join('\n');
+      } else text = firstPass;
+    } else if (mode === 'code') text = await ocr(ocrSource, 'eng', true);
+    else text = await ocr(ocrSource, mode);
+
+    const cat = classify(text);
+    $('ocrText').value = text; $('category').value = cat; $('title').value = suggestTitle(text, cat);
+    const secs = ((performance.now() - t0) / 1000).toFixed(1);
+    const codey = ['recovery', 'wifi', 'security'].includes(cat);
+    if (codey) $('keepImg').checked = true;
+    $('ocrStatus').textContent = t('ocrDone', { s: secs }) + t(codey ? 'ocrCheckCodes' : 'ocrCheck');
+  } catch (err) {
+    $('ocrStatus').textContent = t('ocrFail', { e: err.message });
+  }
+  $('rerunOcrBtn').disabled = false; $('saveBtn').disabled = false;
+}
+
+async function preprocessCodes(dataUrl) {
+  const img = new Image();
+  await new Promise((resolve, reject) => { img.onload = resolve; img.onerror = reject; img.src = dataUrl; });
+  const canvas = document.createElement('canvas');
+  canvas.width = img.naturalWidth * 2; canvas.height = img.naturalHeight * 2;
+  const ctx = canvas.getContext('2d', { willReadFrequently: true });
+  ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, canvas.width, canvas.height);
+  ctx.filter = 'blur(0.5px)'; ctx.drawImage(img, 0, 0, canvas.width, canvas.height); ctx.filter = 'none';
+  const pixels = ctx.getImageData(0, 0, canvas.width, canvas.height);
+  let lo = 255, hi = 0;
+  for (let i = 0; i < pixels.data.length; i += 4) {
+    const gray = Math.round(0.299 * pixels.data[i] + 0.587 * pixels.data[i + 1] + 0.114 * pixels.data[i + 2]);
+    pixels.data[i] = pixels.data[i + 1] = pixels.data[i + 2] = gray;
+    lo = Math.min(lo, gray); hi = Math.max(hi, gray);
+  }
+  const range = Math.max(1, hi - lo);
+  for (let i = 0; i < pixels.data.length; i += 4) {
+    const contrast = Math.max(0, Math.min(255, Math.round((pixels.data[i] - lo) * 255 / range)));
+    pixels.data[i] = pixels.data[i + 1] = pixels.data[i + 2] = contrast;
+  }
+  ctx.putImageData(pixels, 0, 0);
+  return canvas.toDataURL('image/png');
 }
 
 // Tesseract puts spaces between Chinese characters; remove them (not newlines)

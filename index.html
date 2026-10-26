@@ -42,6 +42,7 @@
     <label class="ghost filebtn"><span data-i18n="importBtn"></span><input id="importFile" type="file" accept=".json,application/json" hidden></label>
     <label class="row"><span data-i18n="langLabel"></span> <select id="langSel"><option value="en">English</option><option value="zh">中文</option></select></label>
     <p id="storageInfo" class="hint"></p>
+    <p id="appVersion" class="hint" data-i18n="appVersion"></p>
   </details>
   <label class="fab"><span data-i18n="fab"></span><input id="photo" type="file" accept="image/*" capture="environment" hidden></label>
 </section>
@@ -49,6 +50,14 @@
 <section id="review" class="screen hidden">
   <img id="reviewImg" alt="">
   <p id="ocrStatus" class="hint"></p>
+  <label><span data-i18n="ocrMode"></span><select id="ocrMode">
+    <option value="auto" data-i18n="ocrModeAuto"></option>
+    <option value="code" data-i18n="ocrModeCode"></option>
+    <option value="eng" data-i18n="ocrModeEnglish"></option>
+    <option value="chi_sim" data-i18n="ocrModeChinese"></option>
+    <option value="eng+chi_sim" data-i18n="ocrModeBoth"></option>
+  </select></label>
+  <button id="rerunOcrBtn" type="button" class="ghost" data-i18n="rerunOcr"></button>
   <label><span data-i18n="title"></span><input id="title"></label>
   <label><span data-i18n="category"></span><select id="category"></select></label>
   <label><span data-i18n="ocrText"></span><textarea id="ocrText" rows="8"></textarea></label>

@@ -1,6 +1,7 @@
 import * as C from './crypto.js';
 import * as DB from './db.js';
-import { CATEGORIES, classify, labelOf, suggestTitle } from './classify.js';
+import { CATEGORIES, classify, labelOf } from './classify.js';
+import { safeTitle, selectAutoOcr } from './ocr-logic.js';
 import { t, lang, setLang, applyStatic } from './i18n.js';
 
 const $ = (id) => document.getElementById(id);
@@ -13,6 +14,12 @@ let pending = null;      // new item under review
 let current = null;      // item on the detail screen
 const ocrWorkers = new Map();
 let ocrSource = null;
+let cropImageElement = null;
+let cropSelection = null;
+let imageQueue = [];
+let queueIndex = 0;
+let queueTotal = 0;
+let albumSession = false;
 
 function show(id) {
   for (const s of document.querySelectorAll('.screen')) s.classList.toggle('hidden', s.id !== id);
@@ -69,7 +76,8 @@ async function unlock() {
 
 function lock() {
   key = null; items = []; pending = null; current = null;
-  $('list').innerHTML = ''; $('dText').textContent = ''; $('dImg').removeAttribute('src');
+  imageQueue = []; queueIndex = 0; queueTotal = 0; albumSession = false;
+  $('list').innerHTML = ''; $('dText').textContent = ''; $('dImg').removeAttribute('src'); $('dCropImg').removeAttribute('src');
   show('unlock');
 }
 $('lockBtn').onclick = lock;
@@ -121,25 +129,137 @@ function render() {
 // ----------
 $('photo').onchange = async (e) => {
   const file = e.target.files[0]; e.target.value = '';
-  if (!file) return;
-  const ocrImg = await resize(file, 2000, 0.92);
-  const keepImg = await resize(file, 1280, 0.8);
-  ocrSource = ocrImg;
-  pending = { image: keepImg };
-  $('reviewImg').src = keepImg;
-  $('ocrText').value = ''; $('title').value = ''; $('saveBtn').disabled = true;
-  show('review');
-  $('ocrMode').value = 'auto';
-  await runOcr();
+  if (file) startImageQueue([file], false);
+};
+$('albumBtn').onclick = () => $('albumFiles').click();
+$('albumFiles').onchange = (e) => {
+  const files = Array.from(e.target.files || []); e.target.value = '';
+  if (files.length) startImageQueue(files, true);
 };
 $('rerunOcrBtn').onclick = () => runOcr();
+$('cropAgainBtn').onclick = () => startCrop();
+$('useCropBtn').onclick = () => recognizeSelection(false);
+$('skipCropBtn').onclick = () => recognizeSelection(true);
+$('skipImageCropBtn').onclick = () => finishQueueItem();
+$('skipImageReviewBtn').onclick = () => finishQueueItem();
+
+function startImageQueue(files, fromAlbum) {
+  imageQueue = files; queueIndex = 0; queueTotal = files.length; albumSession = fromAlbum;
+  loadQueuedImage();
+}
+
+async function loadQueuedImage() {
+  if (queueIndex >= queueTotal) return finishImageQueue();
+  const image = await resize(imageQueue[queueIndex], 2200, 0.92);
+  pending = { image };
+  updateQueueProgress();
+  await startCrop();
+}
+
+function updateQueueProgress() {
+  const visible = albumSession && queueTotal > 0;
+  const text = visible ? t('albumProgress', { current: queueIndex + 1, total: queueTotal }) : '';
+  for (const id of ['cropProgress', 'reviewProgress']) {
+    $(id).textContent = text;
+    $(id).classList.toggle('hidden', !visible);
+  }
+}
+
+function finishQueueItem() {
+  pending = null; ocrSource = null; cropImageElement = null;
+  queueIndex++;
+  if (queueIndex < queueTotal) return loadQueuedImage();
+  finishImageQueue();
+}
+
+function finishImageQueue() {
+  const remind = albumSession;
+  imageQueue = []; queueIndex = 0; queueTotal = 0; albumSession = false;
+  pending = null; ocrSource = null; cropImageElement = null;
+  updateQueueProgress(); show('main');
+  if (remind) alert(t('albumReminder'));
+}
+
+function cancelImageQueue() {
+  imageQueue = []; queueIndex = 0; queueTotal = 0; albumSession = false;
+  pending = null; ocrSource = null; cropImageElement = null;
+  updateQueueProgress(); show('main');
+}
+
+async function startCrop() {
+  if (!pending) return;
+  cropImageElement = new Image();
+  await new Promise((resolve, reject) => {
+    cropImageElement.onload = resolve;
+    cropImageElement.onerror = reject;
+    cropImageElement.src = pending.image;
+  });
+  const canvas = $('cropCanvas');
+  canvas.width = cropImageElement.naturalWidth; canvas.height = cropImageElement.naturalHeight;
+  cropSelection = { x: 0, y: 0, w: canvas.width, h: canvas.height };
+  drawCrop();
+  show('crop');
+  updateQueueProgress();
+}
+
+function drawCrop() {
+  if (!cropImageElement || !cropSelection) return;
+  const canvas = $('cropCanvas'), ctx = canvas.getContext('2d');
+  ctx.drawImage(cropImageElement, 0, 0, canvas.width, canvas.height);
+  const s = cropSelection;
+  ctx.fillStyle = 'rgba(0,0,0,.48)'; ctx.beginPath();
+  ctx.rect(0, 0, canvas.width, canvas.height); ctx.rect(s.x, s.y, s.w, s.h);
+  ctx.fill('evenodd');
+  ctx.strokeStyle = '#facc15'; ctx.lineWidth = Math.max(3, canvas.width / 500);
+  ctx.strokeRect(s.x, s.y, s.w, s.h);
+}
+
+let cropDrag = null;
+function canvasPoint(e) {
+  const canvas = $('cropCanvas'), rect = canvas.getBoundingClientRect();
+  return { x: (e.clientX - rect.left) * canvas.width / rect.width, y: (e.clientY - rect.top) * canvas.height / rect.height };
+}
+$('cropCanvas').addEventListener('pointerdown', (e) => {
+  if (!cropImageElement) return;
+  e.preventDefault(); $('cropCanvas').setPointerCapture(e.pointerId);
+  cropDrag = canvasPoint(e); cropSelection = { x: cropDrag.x, y: cropDrag.y, w: 0, h: 0 };
+});
+$('cropCanvas').addEventListener('pointermove', (e) => {
+  if (!cropDrag) return;
+  const p = canvasPoint(e);
+  cropSelection = { x: Math.min(cropDrag.x, p.x), y: Math.min(cropDrag.y, p.y), w: Math.abs(p.x - cropDrag.x), h: Math.abs(p.y - cropDrag.y) };
+  drawCrop();
+});
+for (const eventName of ['pointerup', 'pointercancel']) $('cropCanvas').addEventListener(eventName, () => {
+  if (!cropDrag) return;
+  cropDrag = null;
+  if (cropSelection.w < 8 || cropSelection.h < 8) cropSelection = { x: 0, y: 0, w: $('cropCanvas').width, h: $('cropCanvas').height };
+  drawCrop();
+});
+
+async function recognizeSelection(skip) {
+  if (!pending || !cropImageElement) return;
+  const canvas = $('cropCanvas');
+  const s = skip ? { x: 0, y: 0, w: canvas.width, h: canvas.height } : cropSelection;
+  const output = document.createElement('canvas');
+  output.width = Math.max(1, Math.round(s.w)); output.height = Math.max(1, Math.round(s.h));
+  output.getContext('2d').drawImage(cropImageElement, s.x, s.y, s.w, s.h, 0, 0, output.width, output.height);
+  pending.cropImage = output.toDataURL('image/jpeg', 0.94);
+  ocrSource = pending.cropImage;
+  $('reviewImg').src = pending.image;
+  $('ocrText').value = ''; $('title').value = ''; $('saveBtn').disabled = true;
+  $('ocrMode').value = 'auto';
+  show('review');
+  updateQueueProgress();
+  await runOcr();
+}
 function fillCategories() {
   const sel = $('category'), v = sel.value; sel.innerHTML = '';
   for (const c of CATEGORIES) sel.append(new Option(labelOf(c.id), c.id));
   if (v) sel.value = v;
 }
 $('langSel').onchange = (e) => { setLang(e.target.value); fillCategories(); render(); storageInfo(); };
-$('cancelBtn').onclick = () => { pending = null; show('main'); };
+$('cancelBtn').onclick = cancelImageQueue;
 
 async function getOcrWorker(language, codeMode = false) {
   const workerKey = codeMode ? `${language}:code` : language;
@@ -152,49 +272,52 @@ async function getOcrWorker(language, codeMode = false) {
       gzip: true,
       cacheMethod: 'none', // language data is cached by the Service Worker
     });
-    if (codeMode) {
-      await worker.setParameters({
-        tessedit_char_whitelist: 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-',
-        tessedit_pageseg_mode: '6',
-      });
-    }
+    if (codeMode) await worker.setParameters(codeOcrParameters);
     ocrWorkers.set(workerKey, worker);
   }
   return ocrWorkers.get(workerKey);
 }
 
+const codeOcrParameters = {
+  tessedit_char_whitelist: 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-',
+  tessedit_pageseg_mode: '6',
+};
+
 async function ocr(dataUrl, language, codeMode = false) {
   const worker = await getOcrWorker(language, codeMode);
-  const { data } = await worker.recognize(codeMode ? await preprocessCodes(dataUrl) : dataUrl);
-  return tidy(data.text);
+  if (codeMode) await worker.setParameters(codeOcrParameters);
+  const imageForOcr = codeMode ? await preprocessCodes(dataUrl) : dataUrl;
+  // recognize() is always called with the current crop; there is no OCR-result cache.
+  const { data } = await worker.recognize(imageForOcr);
+  return { text: codeMode ? data.text.replace(/[^A-Za-z0-9\-\r\n]/g, '').trim() : tidy(data.text), confidence: data.confidence };
 }
 
 async function runOcr() {
   if (!ocrSource || !pending) return;
   $('rerunOcrBtn').disabled = true; $('saveBtn').disabled = true;
-  $('ocrStatus').textContent = t('ocrRunning');
+  let mode = $('ocrMode').value;
+  $('ocrStatus').textContent = t(mode === 'code' ? 'ocrCodeRunning' : 'ocrRunning');
+  $('ocrText').value = ''; $('title').value = '';
   const t0 = performance.now();
+  let usedCode = mode === 'code';
   try {
-    const mode = $('ocrMode').value;
     let text;
     if (mode === 'auto') {
       const firstPass = await ocr(ocrSource, 'eng+chi_sim');
-      const firstCategory = classify(firstPass);
-      if (['recovery', 'wifi', 'security'].includes(firstCategory)) {
-        const codePass = await ocr(ocrSource, 'eng', true);
-        // Keep Chinese lines from the bilingual pass because the Code worker is English-only.
-        const chineseLines = firstPass.split('\n').filter((line) => /[\u4e00-\u9fff]/.test(line));
-        text = [codePass, ...chineseLines].filter(Boolean).join('\n');
-      } else text = firstPass;
-    } else if (mode === 'code') text = await ocr(ocrSource, 'eng', true);
-    else text = await ocr(ocrSource, mode);
+      const result = await selectAutoOcr(firstPass, classify(firstPass.text), async () => {
+        $('ocrStatus').textContent = t('ocrCodeRunning');
+        return ocr(ocrSource, 'eng', true);
+      });
+      text = result.text; usedCode = result.usedCode;
+    } else if (mode === 'code') text = (await ocr(ocrSource, 'eng', true)).text;
+    else text = (await ocr(ocrSource, mode)).text;
 
     const cat = classify(text);
-    $('ocrText').value = text; $('category').value = cat; $('title').value = suggestTitle(text, cat);
+    $('ocrText').value = text; $('category').value = cat;
+    $('title').value = safeTitle(text, cat, labelOf(cat), new Date().toLocaleDateString());
     const secs = ((performance.now() - t0) / 1000).toFixed(1);
     const codey = ['recovery', 'wifi', 'security'].includes(cat);
-    if (codey) $('keepImg').checked = true;
-    $('ocrStatus').textContent = t('ocrDone', { s: secs }) + t(codey ? 'ocrCheckCodes' : 'ocrCheck');
+    $('ocrStatus').textContent = (usedCode ? t('ocrCodeDone', { s: secs }) : t('ocrDone', { s: secs })) + t(codey ? 'ocrCheckCodes' : 'ocrCheck');
   } catch (err) {
     $('ocrStatus').textContent = t('ocrFail', { e: err.message });
   }
@@ -251,13 +374,14 @@ $('saveBtn').onclick = async () => {
     title: $('title').value.trim() || labelOf($('category').value),
     category: $('category').value,
     text: $('ocrText').value,
-    image: $('keepImg').checked ? pending.image : null,
+    image: pending.image,
+    cropImage: pending.cropImage,
     created: Date.now(),
   };
   const id = crypto.randomUUID();
   await DB.putItem({ id, ...(await C.encryptJSON(key, entry)) });
   items.unshift({ id, ...entry });
-  pending = null; render(); show('main');
+  render(); await finishQueueItem();
 };
 
 // ----------
@@ -267,6 +391,9 @@ function openDetail(i) {
   $('dMeta').textContent = labelOf(i.category) + ' · ' + new Date(i.created).toLocaleString();
   $('dText').textContent = i.text;
   if (i.image) $('dImg').src = i.image; else $('dImg').removeAttribute('src');
+  $('dOriginalLabel').classList.toggle('hidden', !i.image);
+  if (i.cropImage) $('dCropImg').src = i.cropImage; else $('dCropImg').removeAttribute('src');
+  $('dCropLabel').classList.toggle('hidden', !i.cropImage);
   show('detail');
 }
 $('backBtn').onclick = () => { current = null; show('main'); };

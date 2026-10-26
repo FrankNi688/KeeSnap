@@ -44,11 +44,24 @@
     <p id="storageInfo" class="hint"></p>
     <p id="appVersion" class="hint" data-i18n="appVersion"></p>
   </details>
-  <label class="fab"><span data-i18n="fab"></span><input id="photo" type="file" accept="image/*" capture="environment" hidden></label>
+  <div class="fabGroup">
+    <label class="fab"><span data-i18n="fab"></span><input id="photo" type="file" accept="image/*" capture="environment" hidden></label>
+    <button id="albumBtn" class="fabSecondary" type="button" data-i18n="album"></button>
+    <input id="albumFiles" type="file" accept="image/*" multiple hidden>
+  </div>
+</section>
+
+<section id="crop" class="screen hidden">
+  <h2 id="cropTitle" data-i18n="cropTitle"></h2>
+  <p id="cropProgress" class="hint hidden"></p>
+  <p class="hint" data-i18n="cropInstructions"></p>
+  <canvas id="cropCanvas" aria-labelledby="cropTitle"></canvas>
+  <div class="row"><button id="useCropBtn" data-i18n="useCrop"></button><button id="skipCropBtn" class="ghost" data-i18n="skipCrop"></button><button id="skipImageCropBtn" class="ghost" data-i18n="skipImage"></button></div>
 </section>
 
 <section id="review" class="screen hidden">
   <img id="reviewImg" alt="">
+  <p id="reviewProgress" class="hint hidden"></p>
   <p id="ocrStatus" class="hint"></p>
   <label><span data-i18n="ocrMode"></span><select id="ocrMode">
     <option value="auto" data-i18n="ocrModeAuto"></option>
@@ -58,11 +71,12 @@
     <option value="eng+chi_sim" data-i18n="ocrModeBoth"></option>
   </select></label>
   <button id="rerunOcrBtn" type="button" class="ghost" data-i18n="rerunOcr"></button>
+  <button id="cropAgainBtn" type="button" class="ghost" data-i18n="cropAgain"></button>
   <label><span data-i18n="title"></span><input id="title"></label>
   <label><span data-i18n="category"></span><select id="category"></select></label>
   <label><span data-i18n="ocrText"></span><textarea id="ocrText" rows="8"></textarea></label>
-  <label class="row"><input id="keepImg" type="checkbox" checked> <span data-i18n="keepImg"></span></label>
-  <div class="row"><button id="saveBtn" disabled data-i18n="save"></button><button id="cancelBtn" class="ghost" data-i18n="cancel"></button></div>
+  <p class="hint" data-i18n="imagesSaved"></p>
+  <div class="row"><button id="saveBtn" disabled data-i18n="save"></button><button id="skipImageReviewBtn" class="ghost" data-i18n="skipImage"></button><button id="cancelBtn" class="ghost" data-i18n="cancel"></button></div>
 </section>
 
 <section id="detail" class="screen hidden">
@@ -70,7 +84,10 @@
   <p id="dMeta" class="hint"></p>
   <pre id="dText"></pre>
   <div class="row"><button id="copyBtn" data-i18n="copy"></button><button id="backBtn" class="ghost" data-i18n="back"></button><button id="delBtn" class="danger" data-i18n="del"></button></div>
+  <p id="dOriginalLabel" class="hint" data-i18n="originalImage"></p>
   <img id="dImg" alt="">
+  <p id="dCropLabel" class="hint" data-i18n="croppedImage"></p>
+  <img id="dCropImg" alt="">
 </section>
 
 <div id="updateBar" class="hidden"><span data-i18n="updateReady"></span> <button id="updateBtn" data-i18n="updateBtn"></button></div>

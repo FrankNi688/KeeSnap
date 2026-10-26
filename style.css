@@ -25,8 +25,12 @@ header .ghost { color:#fff; border-color:#fff; }
 #chips { display:flex; gap:6px; flex-wrap:wrap; }
 #chips button { padding:4px 10px; font-size:13px; background:#e5e7eb; color:var(--fg); }
 #chips button.on { background:var(--acc); color:#fff; }
-.fab { position:fixed; right:20px; bottom:calc(env(safe-area-inset-bottom) + 20px); background:var(--acc); color:#fff; padding:14px 22px; border-radius:30px; font-weight:600; box-shadow:0 4px 12px rgba(37,99,235,.4); cursor:pointer; }
+.fabGroup { position:fixed; right:20px; bottom:calc(env(safe-area-inset-bottom) + 20px); z-index:3; display:flex; align-items:center; gap:10px; }
+.fab { background:var(--acc); color:#fff; padding:14px 22px; border-radius:30px; font-weight:600; box-shadow:0 4px 12px rgba(37,99,235,.4); cursor:pointer; }
+.fabSecondary { background:var(--fg); color:#fff; padding:14px 22px; border-radius:30px; font-weight:600; box-shadow:0 4px 12px rgba(20,33,61,.3); }
 #reviewImg, #dImg { width:100%; border-radius:12px; margin-top:8px; }
+#dCropImg { width:100%; border-radius:12px; margin-top:8px; }
+#cropCanvas { display:block; width:100%; height:auto; max-height:70vh; object-fit:contain; border-radius:12px; background:#111827; touch-action:none; }
 pre { white-space:pre-wrap; word-break:break-all; background:#fff; padding:12px; border-radius:10px; font:15px/1.6 ui-monospace, Menlo, monospace; }
 .tools { margin-top:24px; }
 .tools summary { color:var(--mut); cursor:pointer; margin-bottom:8px; }

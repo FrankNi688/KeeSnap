@@ -4,7 +4,14 @@ const dec = new TextDecoder();
 export const PBKDF2_ITER = 600000;
 const VERIFIER = 'keesnap-ok';
 
-export const b64 = (buf) => btoa(String.fromCharCode(...new Uint8Array(buf)));
+export const b64 = (buf) => {
+  const bytes = new Uint8Array(buf);
+  let binary = '';
+  for (let i = 0; i < bytes.length; i += 0x8000) {
+    binary += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
+  }
+  return btoa(binary);
+};
 export const unb64 = (s) => Uint8Array.from(atob(s), (c) => c.charCodeAt(0));
 
 export function randomBytes(n) {

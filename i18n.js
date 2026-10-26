@@ -1,6 +1,10 @@
 // UI strings in English and Simplified Chinese. Language = saved choice, else the phone's language.
 const S = {
   en: {
+    album: 'Album', albumProgress: 'Image {current} of {total}', skipImage: 'Skip image',
+    albumReminder: 'Reminder: The original photos are still unencrypted in your album. Delete them from the album and Recently Deleted.',
+    cropTitle: 'Crop the area to read', cropInstructions: 'Drag over the text or codes you want to recognize. The full photo is selected by default.', useCrop: 'Use crop', skipCrop: 'Skip', cropAgain: 'Crop again', imagesSaved: 'The full photo and crop are saved encrypted with this item.', originalImage: 'Original photo', croppedImage: 'Cropped area',
+    ocrCodeRunning: 'Reading cropped text in Code mode…', ocrCodeDone: 'Code OCR done in {s} s. ',
     appVersion: 'Version: ks-v8',
     ocrMode: 'OCR mode', ocrModeAuto: 'Auto', ocrModeCode: 'Code', ocrModeEnglish: 'English', ocrModeChinese: 'Chinese', ocrModeBoth: 'Chinese + English', rerunOcr: 'Re-run OCR',
     appName: 'KeeSnap', lock: 'Lock',
@@ -32,6 +36,10 @@ const S = {
     cat_bank: 'Banking', cat_other: 'Other',
   },
   zh: {
+    album: '相册', albumProgress: '第 {current} 张，共 {total} 张', skipImage: '跳过此图片',
+    albumReminder: '提醒：相册中的原始照片仍未加密。请从相册和“最近删除”中删除这些照片。',
+    cropTitle: '裁剪识别区域', cropInstructions: '拖动选择要识别的文字或代码区域。默认选中整张照片。', useCrop: '使用裁剪区域', skipCrop: '跳过', cropAgain: '重新裁剪', imagesSaved: '原始照片和裁剪图都会加密保存。', originalImage: '原始照片', croppedImage: '裁剪区域',
+    ocrCodeRunning: '正在使用代码模式识别裁剪区域…', ocrCodeDone: '代码识别完成，用时 {s} 秒。',
     appVersion: '版本：ks-v8',
     ocrMode: '识别模式', ocrModeAuto: '自动', ocrModeCode: '代码', ocrModeEnglish: '英语', ocrModeChinese: '中文', ocrModeBoth: '中文 + 英语', rerunOcr: '重新识别',
     appName: 'KeeSnap', lock: '锁定',

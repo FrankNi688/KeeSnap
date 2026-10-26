@@ -1,7 +1,7 @@
 import * as C from './crypto.js';
 import * as DB from './db.js';
 import { CATEGORIES, classify, labelOf } from './classify.js';
-import { filterNonCodeLines, safeTitle, selectAutoOcr } from './ocr-logic.js';
+import { filterNonCodeLines, keepAutoOcrLines, safeTitle } from './ocr-logic.js';
 import { t, lang, setLang, applyStatic } from './i18n.js';
 
 const $ = (id) => document.getElementById(id);
@@ -13,6 +13,7 @@ let filter = 'all';
 let pending = null;      // new item under review
 let current = null;      // item on the detail screen
 const ocrWorkers = new Map();
+let paddleOcrPromise = null;
 let ocrSource = null;
 let cropImageElement = null;
 let cropSelection = null;
@@ -266,8 +267,8 @@ function fillCategories() {
 $('langSel').onchange = (e) => { setLang(e.target.value); fillCategories(); render(); storageInfo(); };
 $('cancelBtn').onclick = cancelImageQueue;
 
-async function getOcrWorker(language, codeMode = false) {
-  const workerKey = codeMode ? `${language}:code` : language;
+async function getOcrWorker(language) {
+  const workerKey = language;
   if (!ocrWorkers.has(workerKey)) {
     const base = new URL('vendor/', location.href).href;
     const worker = await Tesseract.createWorker(language.split('+'), 1, {
@@ -277,24 +278,32 @@ async function getOcrWorker(language, codeMode = false) {
       gzip: true,
       cacheMethod: 'none', // language data is cached by the Service Worker
     });
-    if (codeMode) await worker.setParameters(codeOcrParameters);
     ocrWorkers.set(workerKey, worker);
   }
   return ocrWorkers.get(workerKey);
 }
 
-const codeOcrParameters = {
-  tessedit_char_whitelist: 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-',
-  tessedit_pageseg_mode: '6',
-};
-
-async function ocr(dataUrl, language, codeMode = false) {
-  const worker = await getOcrWorker(language, codeMode);
-  if (codeMode) await worker.setParameters(codeOcrParameters);
-  const imageForOcr = codeMode ? await preprocessCodes(dataUrl) : dataUrl;
-  // recognize() is always called with the current crop; there is no OCR-result cache.
-  const { data } = await worker.recognize(imageForOcr);
-  return { text: codeMode ? data.text.replace(/[^A-Za-z0-9\-\s]/g, '').trim() : tidy(data.text), confidence: data.confidence };
+async function ocr(dataUrl, language) {
+  if (language === 'eng' || language === 'paddle') {
+    if (!paddleOcrPromise) {
+      $('ocrStatus').textContent = t('loadingReader');
+      paddleOcrPromise = import('./vendor/ppocr/ppocr.js').then(({ createOcr }) => createOcr({
+        detUrl: 'vendor/ppocr/ch_PP-OCRv4_det_mobile.onnx',
+        recUrl: 'vendor/ppocr/en_PP-OCRv4_rec_mobile.onnx',
+        dictUrl: 'vendor/ppocr/en_dict.txt', wasmPaths: new URL('vendor/ppocr/', location.href).href,
+      }));
+    }
+    const engine = await paddleOcrPromise;
+    ocrStatus.textContent = t(ocrMode.value === 'code' ? 'ocrCodeRunning' : 'ocrRunning');
+    const img = new Image();
+    await new Promise((resolve, reject) => { img.onload = resolve; img.onerror = reject; img.src = dataUrl; });
+    const lines = await engine.recognize(img);
+    lines.sort((a, b) => (a.box?.cy ?? 0) - (b.box?.cy ?? 0));
+    return { text: lines.map((line) => line.text).join('\n'), confidence: 100 };
+  }
+  const worker = await getOcrWorker(language);
+  const { data } = await worker.recognize(dataUrl);
+  return { text: tidy(data.text), confidence: data.confidence };
 }
 
 async function runOcr() {
@@ -310,17 +319,16 @@ async function runOcr() {
   try {
     let text;
     let removedLines = [];
+    let noCodesFound = false;
     if (mode === 'auto') {
-      const firstPass = await ocr(ocrSource, 'eng+chi_sim');
-      const result = await selectAutoOcr(firstPass, classify(firstPass.text), async () => {
-        $('ocrStatus').textContent = t('ocrCodeRunning');
-        return ocr(ocrSource, 'eng', true);
-      });
+      const firstPass = await ocr(ocrSource, 'paddle');
+      const result = keepAutoOcrLines(firstPass.text);
       text = result.text; usedCode = result.usedCode; removedLines = result.removedLines || [];
     } else if (mode === 'code') {
-      const filtered = filterNonCodeLines((await ocr(ocrSource, 'eng', true)).text);
-      text = filtered.text; removedLines = filtered.removedLines;
-    } else text = (await ocr(ocrSource, mode)).text;
+      const filtered = filterNonCodeLines((await ocr(ocrSource, 'paddle')).text);
+      text = filtered.text; removedLines = filtered.removedLines; noCodesFound = !filtered.foundCodes;
+    } else if (mode === 'eng') text = (await ocr(ocrSource, 'paddle')).text;
+    else text = (await ocr(ocrSource, mode)).text;
 
     const cat = classify(text);
     $('ocrText').value = text; $('category').value = cat;
@@ -328,7 +336,7 @@ async function runOcr() {
     const secs = ((performance.now() - t0) / 1000).toFixed(1);
     const codey = ['recovery', 'wifi', 'security'].includes(cat);
     const removedStatus = removedLines.length ? ` ${t('ocrRemovedLines', { n: removedLines.length })}` : '';
-    $('ocrStatus').textContent = (usedCode ? t('ocrCodeDone', { s: secs }) : t('ocrDone', { s: secs })) + removedStatus + t(codey ? 'ocrCheckCodes' : 'ocrCheck');
+    $('ocrStatus').textContent = (usedCode ? t('ocrCodeDone', { s: secs }) : t('ocrDone', { s: secs })) + removedStatus + (noCodesFound ? t('noCodesFound') : t(codey ? 'ocrCheckCodes' : 'ocrCheck'));
     if (removedLines.length) {
       $('removedLines').textContent = removedLines.join('\n');
       $('showRemovedLinesBtn').textContent = t('showRemovedLines');
@@ -339,30 +347,6 @@ async function runOcr() {
     $('ocrStatus').textContent = t('ocrFail', { e: err.message });
   }
   $('rerunOcrBtn').disabled = false; $('saveBtn').disabled = false;
-}
-
-async function preprocessCodes(dataUrl) {
-  const img = new Image();
-  await new Promise((resolve, reject) => { img.onload = resolve; img.onerror = reject; img.src = dataUrl; });
-  const canvas = document.createElement('canvas');
-  canvas.width = img.naturalWidth * 2; canvas.height = img.naturalHeight * 2;
-  const ctx = canvas.getContext('2d', { willReadFrequently: true });
-  ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, canvas.width, canvas.height);
-  ctx.filter = 'blur(0.5px)'; ctx.drawImage(img, 0, 0, canvas.width, canvas.height); ctx.filter = 'none';
-  const pixels = ctx.getImageData(0, 0, canvas.width, canvas.height);
-  let lo = 255, hi = 0;
-  for (let i = 0; i < pixels.data.length; i += 4) {
-    const gray = Math.round(0.299 * pixels.data[i] + 0.587 * pixels.data[i + 1] + 0.114 * pixels.data[i + 2]);
-    pixels.data[i] = pixels.data[i + 1] = pixels.data[i + 2] = gray;
-    lo = Math.min(lo, gray); hi = Math.max(hi, gray);
-  }
-  const range = Math.max(1, hi - lo);
-  for (let i = 0; i < pixels.data.length; i += 4) {
-    const contrast = Math.max(0, Math.min(255, Math.round((pixels.data[i] - lo) * 255 / range)));
-    pixels.data[i] = pixels.data[i + 1] = pixels.data[i + 2] = contrast;
-  }
-  ctx.putImageData(pixels, 0, 0);
-  return canvas.toDataURL('image/png');
 }
 
 // Tesseract puts spaces between Chinese characters; remove them (not newlines)
@@ -419,7 +403,34 @@ $('copyBtn').onclick = async () => {
   $('copyBtn').textContent = t('copied'); setTimeout(() => ($('copyBtn').textContent = t('copy')), 1500);
 };
 $('delBtn').onclick = async () => {
-  if (!confirm(t('confirmDel'))) return;
+  $('deletePrompt').textContent = t('confirmDel');
+  $('deletePhrase').value = '';
+  $('deletePhrase').classList.add('hidden');
+  $('deleteAdvance').classList.remove('hidden');
+  $('deleteConfirm').classList.add('hidden');
+  $('deleteConfirm').disabled = true;
+  $('deleteCancel').textContent = t('cancel');
+  $('deleteAdvance').textContent = t('del');
+  $('deleteConfirm').textContent = t('del');
+  $('deleteDialog').showModal();
+};
+$('deleteCancel').onclick = () => $('deleteDialog').close();
+$('deleteDialog').addEventListener('click', (e) => { if (e.target === $('deleteDialog')) $('deleteDialog').close(); });
+$('deleteAdvance').onclick = () => {
+  $('deletePrompt').textContent = t('deletePhrasePrompt');
+  $('deletePhrase').placeholder = t('deletePhraseHint');
+  $('deletePhrase').classList.remove('hidden');
+  $('deleteAdvance').classList.add('hidden');
+  $('deleteConfirm').classList.remove('hidden');
+  $('deletePhrase').focus();
+};
+$('deletePhrase').oninput = () => {
+  const phrase = $('deletePhrase').value.trim().toLocaleUpperCase();
+  $('deleteConfirm').disabled = !(phrase === 'DELETE' || (lang === 'zh' && phrase === '删除'.toLocaleUpperCase()));
+};
+$('deleteConfirm').onclick = async () => {
+  if ($('deleteConfirm').disabled || !current) return;
+  $('deleteDialog').close();
   await DB.delItem(current.id);
   items = items.filter((x) => x.id !== current.id);
   render(); show('main');

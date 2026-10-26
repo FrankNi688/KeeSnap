@@ -1,19 +1,19 @@
-const CODE_LINE = /^\s*(?:[A-Za-z0-9]{4,5}[-\s]){2,}[A-Za-z0-9]{4,5}\s*$/;
+const CODE_LINE = /^\s*[A-Za-z0-9]+(?:-[A-Za-z0-9]+)+\s*$/;
 const TITLE_CODE_PATTERN = /\b[A-Za-z0-9]{2,6}(?:-[A-Za-z0-9]{2,6})+\b/;
 const SECRET_LABEL = /\b(?:password|passphrase|passcode|pin|answer|secret)\b/i;
-const CODE_LIKE_LINE = /^\s*[A-Za-z0-9]{2,6}(?:[- ]+[A-Za-z0-9]{2,6})+\s*$/;
+const CODE_LIKE_LINE = CODE_LINE;
 
 export function filterNonCodeLines(text) {
   const lines = (text || '').split(/\r?\n/);
   const codeLineCount = lines.filter((line) => CODE_LIKE_LINE.test(line)).length;
-  if (codeLineCount < 2) return { text: lines.join('\n'), removedLines: [] };
+  if (codeLineCount === 0) return { text: lines.join('\n'), removedLines: [], foundCodes: false };
   const kept = [];
   const removedLines = [];
   for (const line of lines) {
-    if (line.includes('-') || CODE_LIKE_LINE.test(line) || !line.trim()) kept.push(line);
+    if (CODE_LIKE_LINE.test(line) || !line.trim()) kept.push(line);
     else removedLines.push(line);
   }
-  return { text: kept.join('\n'), removedLines };
+  return { text: kept.join('\n'), removedLines, foundCodes: true };
 }
 
 function mostlyChinese(line) {
@@ -25,6 +25,13 @@ function mostlyChinese(line) {
 
 export function countCodeLikeLines(text) {
   return (text || '').split(/\r?\n/).filter((line) => CODE_LINE.test(line)).length;
+}
+
+export function keepAutoOcrLines(text) {
+  const filtered = filterNonCodeLines(text);
+  return filtered.foundCodes && countCodeLikeLines(text) >= 2
+    ? { ...filtered, usedCode: true }
+    : { text: text || '', removedLines: [], usedCode: false };
 }
 
 export function looksLikeNormalText(text, confidence) {

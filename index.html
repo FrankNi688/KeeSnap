@@ -92,9 +92,20 @@
   <img id="dCropImg" alt="">
 </section>
 
+<dialog id="deleteDialog">
+  <p id="deletePrompt"></p>
+  <input id="deletePhrase" type="text" autocomplete="off" class="hidden">
+  <div class="row">
+    <button id="deleteCancel" class="ghost" type="button"></button>
+    <button id="deleteAdvance" class="danger" type="button"></button>
+    <button id="deleteConfirm" class="danger hidden" type="button" disabled></button>
+  </div>
+</dialog>
+
 <div id="updateBar" class="hidden"><span data-i18n="updateReady"></span> <button id="updateBtn" data-i18n="updateBtn"></button></div>
 
 <script src="vendor/tesseract/tesseract.min.js"></script>
+<script src="vendor/ppocr/ort.min.js"></script>
 <script type="module" src="app.js"></script>
 </body>
 </html>

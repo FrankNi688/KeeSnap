@@ -12,7 +12,7 @@ export async function createOcr({ detUrl, recUrl, dictUrl, wasmPaths }) {
   ]);
   // index 0 = CTC blank, then dict lines, then space
   const chars = ['', ...dictText.split('\n').filter((c, i, a) => !(i === a.length - 1 && c === '')), ' '];
-  return { recognize: (img) => recognize(det, rec, chars, img) };
+  return { recognize: (img, opts) => recognize(det, rec, chars, img, opts) };
 }
 
 function toCanvas(img, w, h, sx = 0, sy = 0, sw = img.width, sh = img.height) {
@@ -125,12 +125,62 @@ async function recLine(rec, chars, img, b) {
   return { text: text.trim(), score: confN ? confSum / confN : 0 };
 }
 
-async function recognize(det, rec, chars, img) {
+// Multi-read voting (v11): a single read flips look-alike characters (J/3, 3/S, x/X)
+// depending on tiny scale or JPEG differences. Read each line several times from
+// slightly different scales and box paddings, then vote character by character.
+const VOTE_SCALES = [1, 0.9, 0.8, 0.7, 0.6];
+const VOTE_PADS = [1];
+function scaledSources(img) {
+  return VOTE_SCALES.map((s) => {
+    if (s === 1) return { s, src: img };
+    const c = document.createElement('canvas');
+    c.width = Math.max(1, Math.round(img.width * s)); c.height = Math.max(1, Math.round(img.height * s));
+    const ctx = c.getContext('2d'); ctx.imageSmoothingQuality = 'high'; ctx.drawImage(img, 0, 0, c.width, c.height);
+    return { s, src: c };
+  });
+}
+function vote(reads) {
+  const ok = reads.filter((r) => r.text);
+  if (!ok.length) return { text: '', score: 0, agree: 0, n: 0 };
+  // most common length (weighted by score)
+  const byLen = new Map();
+  for (const r of ok) byLen.set(r.text.length, (byLen.get(r.text.length) || 0) + 1 + r.score / 10);
+  const L = [...byLen.entries()].sort((a, b) => b[1] - a[1])[0][0];
+  const same = ok.filter((r) => r.text.length === L);
+  let text = '', agree = 1;
+  for (let i = 0; i < L; i++) {
+    const tally = new Map();
+    for (const r of same) tally.set(r.text[i], (tally.get(r.text[i]) || 0) + 1 + r.score / 10);
+    const top = [...tally.entries()].sort((a, b) => b[1] - a[1]);
+    text += top[0][0];
+    const cnt = same.filter((r) => r.text[i] === top[0][0]).length;
+    agree = Math.min(agree, cnt / same.length);
+  }
+  const score = same.reduce((a, r) => a + r.score, 0) / same.length;
+  return { text, score, agree, n: same.length };
+}
+
+async function recognize(det, rec, chars, img, opts = {}) {
   const boxes = await detect(det, img);
+  const multi = opts.vote !== false;
+  const sources = multi ? scaledSources(img) : [{ s: 1, src: img }];
+  const pads = multi ? VOTE_PADS : [1];
   const lines = [];
   for (const b of boxes) {
-    const r = await recLine(rec, chars, img, b);
-    if (r.text && r.score >= 0.5) lines.push({ ...r, box: b });
+    const first = await recLine(rec, chars, img, b);
+    // only vote on lines that look like codes (contain a dash) to keep it fast
+    if (!multi || !/-/.test(first.text)) {
+      if (first.text && first.score >= 0.5) lines.push({ ...first, box: b });
+      continue;
+    }
+    const reads = [first];
+    for (const { s, src } of sources) for (const pd of pads) {
+      if (s === 1 && pd === 1) continue;
+      const bb = { cx: b.cx * s, cy: b.cy * s, w: b.w * s * pd, h: b.h * s * (1 + (pd - 1) * 1.5), angle: b.angle };
+      reads.push(await recLine(rec, chars, src, bb));
+    }
+    const v = vote(reads);
+    if (v.text && v.score >= 0.5) lines.push({ text: v.text, score: v.score, agree: v.agree, reads: reads.map((r) => r.text), box: b });
   }
   return lines;
 }

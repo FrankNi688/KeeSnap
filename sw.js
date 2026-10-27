@@ -1,5 +1,5 @@
 // Offline: cache the app, the OCR engine and the English/Chinese language data
-const VERSION = 'ks-v10';
+const VERSION = 'ks-v11';
 const ASSETS = [
   './', 'index.html', 'style.css', 'app.js', 'crypto.js', 'db.js', 'classify.js', 'ocr-logic.js', 'i18n.js', 'manifest.webmanifest',
   'icons/icon-192.png', 'icons/icon-512.png', 'icons/icon-maskable-512.png', 'icons/icon-180.png',

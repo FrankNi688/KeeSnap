@@ -1,10 +1,16 @@
 // Minimal PP-OCRv4 (det + English rec) for the browser, using onnxruntime-web.
 // No OpenCV: axis-aligned boxes from connected components (fine for horizontal text).
-// Expects global `ort` (onnxruntime-web).
+// Expects global `ort` (onnxruntime-web). Runs on the page or inside a Web Worker (v12):
+// on the page it draws on <canvas>, in a worker on OffscreenCanvas; the pixels are the same.
 
-export async function createOcr({ detUrl, recUrl, dictUrl, wasmPaths }) {
+function makeCanvas(w, h) {
+  if (typeof document !== 'undefined') { const c = document.createElement('canvas'); c.width = w; c.height = h; return c; }
+  return new OffscreenCanvas(w, h);
+}
+
+export async function createOcr({ detUrl, recUrl, dictUrl, wasmPaths, numThreads = 1 }) {
   if (wasmPaths) ort.env.wasm.wasmPaths = wasmPaths;
-  ort.env.wasm.numThreads = 1;
+  ort.env.wasm.numThreads = Math.max(1, numThreads | 0);
   const [det, rec, dictText] = await Promise.all([
     ort.InferenceSession.create(detUrl, { executionProviders: ['wasm'] }),
     ort.InferenceSession.create(recUrl, { executionProviders: ['wasm'] }),
@@ -16,8 +22,7 @@ export async function createOcr({ detUrl, recUrl, dictUrl, wasmPaths }) {
 }
 
 function toCanvas(img, w, h, sx = 0, sy = 0, sw = img.width, sh = img.height) {
-  const c = document.createElement('canvas');
-  c.width = w; c.height = h;
+  const c = makeCanvas(w, h);
   const ctx = c.getContext('2d', { willReadFrequently: true });
   ctx.drawImage(img, sx, sy, sw, sh, 0, 0, w, h);
   return ctx.getImageData(0, 0, w, h).data;
@@ -105,7 +110,7 @@ async function recLine(rec, chars, img, b) {
   const H = 48;
   const W = Math.max(8, Math.min(2000, Math.ceil((H * b.w) / b.h)));
   const padW = Math.max(320, W);
-  const c = document.createElement('canvas'); c.width = W; c.height = H;
+  const c = makeCanvas(W, H);
   const ctx = c.getContext('2d', { willReadFrequently: true });
   ctx.scale(W / b.w, H / b.h);
   ctx.translate(b.w / 2, b.h / 2);
@@ -133,8 +138,7 @@ const VOTE_PADS = [1];
 function scaledSources(img) {
   return VOTE_SCALES.map((s) => {
     if (s === 1) return { s, src: img };
-    const c = document.createElement('canvas');
-    c.width = Math.max(1, Math.round(img.width * s)); c.height = Math.max(1, Math.round(img.height * s));
+    const c = makeCanvas(Math.max(1, Math.round(img.width * s)), Math.max(1, Math.round(img.height * s)));
     const ctx = c.getContext('2d'); ctx.imageSmoothingQuality = 'high'; ctx.drawImage(img, 0, 0, c.width, c.height);
     return { s, src: c };
   });
@@ -161,16 +165,21 @@ function vote(reads) {
 }
 
 async function recognize(det, rec, chars, img, opts = {}) {
+  const progress = typeof opts.onProgress === 'function' ? opts.onProgress : () => {};
+  progress({ phase: 'detect' });
   const boxes = await detect(det, img);
   const multi = opts.vote !== false;
+  const skipAbove = typeof opts.skipVoteAbove === 'number' ? opts.skipVoteAbove : Infinity; // off unless set
   const sources = multi ? scaledSources(img) : [{ s: 1, src: img }];
   const pads = multi ? VOTE_PADS : [1];
   const lines = [];
-  for (const b of boxes) {
+  for (let li = 0; li < boxes.length; li++) {
+    const b = boxes[li];
+    progress({ phase: 'line', current: li + 1, total: boxes.length });
     const first = await recLine(rec, chars, img, b);
     // only vote on lines that look like codes (contain a dash) to keep it fast
-    if (!multi || !/-/.test(first.text)) {
-      if (first.text && first.score >= 0.5) lines.push({ ...first, box: b });
+    if (!multi || !/-/.test(first.text) || first.score >= skipAbove) {
+      if (first.text && first.score >= 0.5) lines.push({ ...first, box: b, first: first.score });
       continue;
     }
     const reads = [first];
@@ -180,7 +189,7 @@ async function recognize(det, rec, chars, img, opts = {}) {
       reads.push(await recLine(rec, chars, src, bb));
     }
     const v = vote(reads);
-    if (v.text && v.score >= 0.5) lines.push({ text: v.text, score: v.score, agree: v.agree, reads: reads.map((r) => r.text), box: b });
+    if (v.text && v.score >= 0.5) lines.push({ text: v.text, score: v.score, agree: v.agree, reads: reads.map((r) => r.text), first: first.score, firstText: first.text, box: b });
   }
   return lines;
 }

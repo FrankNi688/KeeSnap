@@ -1,7 +1,11 @@
-// Offline: cache the app, the OCR engine and the English/Chinese language data
-const VERSION = 'ks-v11';
+// Offline: cache the app, the OCR engine and the English/Chinese language data.
+// v12: also adds COOP/COEP headers to every response (the coi-serviceworker idea, merged into this one
+// Service Worker). GitHub Pages can't send these headers itself; with them the page becomes
+// crossOriginIsolated, which unlocks multi-threaded WASM for faster OCR. All files are same-origin.
+const VERSION = 'ks-v12';
 const ASSETS = [
   './', 'index.html', 'style.css', 'app.js', 'crypto.js', 'db.js', 'classify.js', 'ocr-logic.js', 'i18n.js', 'manifest.webmanifest',
+  'ocr-worker.js',
   'icons/icon-192.png', 'icons/icon-512.png', 'icons/icon-maskable-512.png', 'icons/icon-180.png',
   'vendor/tesseract/tesseract.min.js', 'vendor/tesseract/worker.min.js',
   'vendor/tesseract/tesseract-core-simd-lstm.wasm.js', 'vendor/tesseract/tesseract-core-lstm.wasm.js',
@@ -22,9 +26,21 @@ self.addEventListener('activate', (e) => {
   );
 });
 
+function isolate(res) {
+  if (!res || res.status === 0 || res.type === 'opaque' || res.type === 'opaqueredirect') return res;
+  const h = new Headers(res.headers);
+  h.set('Cross-Origin-Opener-Policy', 'same-origin');
+  h.set('Cross-Origin-Embedder-Policy', 'require-corp');
+  h.set('Cross-Origin-Resource-Policy', 'same-origin');
+  return new Response(res.body, { status: res.status, statusText: res.statusText, headers: h });
+}
+
 self.addEventListener('fetch', (e) => {
-  if (e.request.method !== 'GET') return;
+  const r = e.request;
+  if (r.method !== 'GET') return;
+  if (r.cache === 'only-if-cached' && r.mode !== 'same-origin') return;
+  if (new URL(r.url).origin !== self.location.origin) return; // KeeSnap never loads anything from elsewhere
   e.respondWith(
-    caches.match(e.request, { ignoreSearch: true }).then((hit) => hit || fetch(e.request))
+    caches.match(r, { ignoreSearch: true }).then((hit) => hit || fetch(r)).then(isolate)
   );
 });

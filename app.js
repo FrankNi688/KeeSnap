@@ -33,6 +33,7 @@ function setupUpdates() {
   const hadController = !!navigator.serviceWorker.controller; // false on the very first install
   navigator.serviceWorker.addEventListener('controllerchange', () => {
     if (hadController) $('updateBar').classList.remove('hidden');
+    else reloadForIsolation();
   });
   navigator.serviceWorker.register('sw.js').then((reg) => {
     // also check when the app comes back from the background, not only on a cold start
@@ -40,6 +41,17 @@ function setupUpdates() {
   }).catch(() => {});
 }
 $('updateBtn').onclick = () => location.reload();
+// v12: sw.js adds COOP/COEP headers so the page becomes crossOriginIsolated (multi-threaded OCR).
+// On the very first visit the page was loaded before the Service Worker existed, so reload once,
+// but only while nothing could be lost: still on the setup/unlock screen with empty password fields.
+function reloadForIsolation() {
+  if (self.crossOriginIsolated) return;
+  try { if (sessionStorage.getItem('ks-coi-reload')) return; } catch { return; }
+  const onEntry = ['setup', 'unlock'].some((id) => !$(id).classList.contains('hidden'));
+  if (key || !onEntry || $('pw1').value || $('pw2').value || $('pw').value) return; // threads come on the next launch instead
+  try { sessionStorage.setItem('ks-coi-reload', '1'); } catch {}
+  location.reload();
+}
 $('showRemovedLinesBtn').onclick = () => {
   const details = $('removedLines');
   details.classList.toggle('hidden');
@@ -194,6 +206,7 @@ function cancelImageQueue() {
 
 async function startCrop() {
   if (!pending) return;
+  getPaddleEngine().catch(() => {});
   cropImageElement = new Image();
   await new Promise((resolve, reject) => {
     cropImageElement.onload = resolve;
@@ -264,7 +277,7 @@ function fillCategories() {
   for (const c of CATEGORIES) sel.append(new Option(labelOf(c.id), c.id));
   if (v) sel.value = v;
 }
-$('langSel').onchange = (e) => { setLang(e.target.value); fillCategories(); render(); storageInfo(); };
+$('langSel').onchange = (e) => { setLang(e.target.value); fillCategories(); render(); storageInfo(); showOcrInfo(); };
 $('cancelBtn').onclick = cancelImageQueue;
 
 async function getOcrWorker(language) {
@@ -283,21 +296,83 @@ async function getOcrWorker(language) {
   return ocrWorkers.get(workerKey);
 }
 
+// ---------- v12: English/code OCR runs in a Web Worker (ocr-worker.js); falls back to the page if a worker can't run it
+const FORCE_MAIN_OCR = new URLSearchParams(location.search).get('ocr') === 'main'; // test switch
+let ocrWorkerClient = null;   // Promise<client> | null
+let ocrMsgId = 0;
+let ocrInfo = null;           // { path, threads, isolated }
+function mainThreads() {
+  if (!self.crossOriginIsolated || typeof SharedArrayBuffer === 'undefined') return 1;
+  return Math.max(1, Math.min(4, navigator.hardwareConcurrency || 1));
+}
+function startOcrWorker() {
+  if (FORCE_MAIN_OCR || typeof Worker === 'undefined' || typeof createImageBitmap === 'undefined') return Promise.reject(new Error('no-worker'));
+  return new Promise((resolve, reject) => {
+    let w;
+    try { w = new Worker('ocr-worker.js'); } catch (err) { return reject(err); }
+    const waiting = new Map();
+    w.onmessage = (e) => {
+      const m = e.data; const job = waiting.get(m.id); if (!job) return;
+      if (m.type === 'progress') return job.onProgress && job.onProgress(m);
+      waiting.delete(m.id);
+      if (m.type === 'error') job.reject(new Error(m.message)); else job.resolve(m);
+    };
+    w.onerror = (e) => { e.preventDefault?.(); const err = new Error(e.message || 'worker error'); for (const j of waiting.values()) j.reject(err); waiting.clear(); reject(err); };
+    const call = (msg, transfer = [], onProgress) => new Promise((res, rej) => {
+      const id = ++ocrMsgId; waiting.set(id, { resolve: res, reject: rej, onProgress }); w.postMessage({ ...msg, id }, transfer);
+    });
+    call({ type: 'init' }).then((m) => { ocrInfo = m.info; showOcrInfo(); resolve({ call, worker: w }); }, (err) => { w.terminate(); reject(err); });
+  });
+}
+function startMainOcr() {
+  const numThreads = mainThreads();
+  return import('./vendor/ppocr/ppocr.js').then(({ createOcr }) => createOcr({
+    detUrl: 'vendor/ppocr/ch_PP-OCRv4_det_mobile.onnx',
+    recUrl: 'vendor/ppocr/en_PP-OCRv4_rec_mobile.onnx',
+    dictUrl: 'vendor/ppocr/en_dict.txt', wasmPaths: new URL('vendor/ppocr/', location.href).href, numThreads,
+  })).then((engine) => { ocrInfo = { path: 'main', threads: numThreads, isolated: !!self.crossOriginIsolated }; showOcrInfo(); return engine; });
+}
+// one engine for the whole session; preloaded while the user crops so the first OCR starts sooner
+function getPaddleEngine() {
+  if (!paddleOcrPromise) {
+    paddleOcrPromise = startOcrWorker()
+      .then((client) => ({ kind: 'worker', client }))
+      .catch(() => startMainOcr().then((engine) => ({ kind: 'main', engine })));
+    paddleOcrPromise.catch(() => { paddleOcrPromise = null; });
+  }
+  return paddleOcrPromise;
+}
+function showOcrInfo() {
+  window.__ksOcrInfo = ocrInfo;
+  if (ocrInfo) $('ocrInfo').textContent = t('ocrEngineInfo', { n: ocrInfo.threads });
+}
+function ocrProgress(p) {
+  if (p.phase === 'detect') $('ocrStatus').textContent = t('ocrDetecting');
+  else if (p.phase === 'line') $('ocrStatus').textContent = t('ocrLineProgress', { current: p.current, total: p.total });
+}
+
 async function ocr(dataUrl, language) {
   if (language === 'eng' || language === 'paddle') {
-    if (!paddleOcrPromise) {
-      $('ocrStatus').textContent = t('loadingReader');
-      paddleOcrPromise = import('./vendor/ppocr/ppocr.js').then(({ createOcr }) => createOcr({
-        detUrl: 'vendor/ppocr/ch_PP-OCRv4_det_mobile.onnx',
-        recUrl: 'vendor/ppocr/en_PP-OCRv4_rec_mobile.onnx',
-        dictUrl: 'vendor/ppocr/en_dict.txt', wasmPaths: new URL('vendor/ppocr/', location.href).href,
-      }));
-    }
-    const engine = await paddleOcrPromise;
+    if (!paddleOcrPromise) $('ocrStatus').textContent = t('loadingReader');
+    const engine = await getPaddleEngine();
     ocrStatus.textContent = t(ocrMode.value === 'code' ? 'ocrCodeRunning' : 'ocrRunning');
     const img = new Image();
     await new Promise((resolve, reject) => { img.onload = resolve; img.onerror = reject; img.src = dataUrl; });
-    const lines = await engine.recognize(img);
+    let lines;
+    if (engine.kind === 'worker') {
+      try {
+        const bitmap = await createImageBitmap(img);
+        lines = (await engine.client.call({ type: 'recognize', bitmap }, [bitmap], ocrProgress)).lines;
+      } catch (err) {
+        // worker died or failed: drop it and redo this photo on the page (same pipeline, same result)
+        engine.client.worker.terminate();
+        paddleOcrPromise = startMainOcr().then((e2) => ({ kind: 'main', engine: e2 }));
+        lines = await (await paddleOcrPromise).engine.recognize(img, { onProgress: ocrProgress });
+      }
+    } else {
+      lines = await engine.engine.recognize(img, { onProgress: ocrProgress });
+    }
+    window.__ksLastLines = lines.map((l) => ({ score: l.score, first: l.first, n: l.n, agree: l.agree }));
     lines.sort((a, b) => (a.box?.cy ?? 0) - (b.box?.cy ?? 0));
     return { text: lines.map((line) => line.text).join('\n'), confidence: 100 };
   }
